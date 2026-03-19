@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Travel App Pro</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+    <style>
+        body{margin:0;font-family:system-ui;overflow:hidden;}
+        #map{position:fixed;top:60px;bottom:70px;left:0;right:0;}
+        .header{position:fixed;top:0;width:100%;height:60px;background:linear-gradient(90deg,#2563eb,#1e40af);color:white;display:flex;align-items:center;padding:0 15px;font-weight:bold;z-index:1001;}
+        .header button{margin-left:auto;background:none;border:none;color:white;font-size:18px;}
+        .nav{position:fixed;bottom:0;width:100%;height:70px;display:flex;background:white;border-top:1px solid #ddd;}
+        .nav button{flex:1;border:none;background:none;font-weight:600;}
+        .panel{position:fixed;bottom:70px;left:0;right:0;height:260px;background:white;border-radius:16px 16px 0 0;padding:15px;display:none;z-index:1002;overflow:auto;}
+        .active{display:block;}
+        .btn{width:100%;padding:12px;margin-top:8px;border:none;border-radius:12px;background:linear-gradient(135deg,#3b82f6,#1d4ed8);color:white;font-weight:600;transition:0.2s;}
+        .btn:hover{transform:scale(1.02);}
+        #msgBox{position:fixed;top:70px;left:50%;transform:translateX(-50%);background:#111;color:white;padding:10px;border-radius:8px;display:none;}
+        .loading{position:fixed;top:70px;left:50%;transform:translateX(-50%);background:black;color:white;padding:5px 10px;border-radius:6px;display:none;}
+        .dark{background:#0f172a;color:white;}
+        .dark .panel{background:#1e293b;color:white;}
+        .dark .nav{background:#1e293b;color:white;}
+        .dark button{color:white;}
+    </style>
+</head>
+<body>
+
+<div class="header">
+    🌍 Travel App Pro
+    <button onclick="toggleDark()">🌙</button>
+</div>
+
+<div id="msgBox"></div>
+<div id="map"></div>
+<div class="loading" id="loading">Loading...</div>
+
+<div class="nav">
+    <button onclick="openPanel('filters')">Map</button>
+    <button onclick="openPanel('fav')">❤️ Saved</button>
+</div>
+
+<!-- FILTERS -->
+<div id="filters" class="panel active">
+    <h3>Explore Nearby</h3>
+    <input id="searchBox" placeholder="Search place..." style="width:100%;padding:10px;border-radius:8px;border:1px solid #ddd;">
+    <button class="btn" onclick="searchPlace()">🔎 Search</button>
+    <button class="btn" onclick="getLocation()">📍 Use My Location</button>
+    <button class="btn" onclick="loadPlaces('restaurant')">🍽 Restaurants</button>
+    <button class="btn" onclick="loadPlaces('bar')">🍺 Bars</button>
+    <button class="btn" onclick="loadPlaces('hotel')">🏨 Hotels</button>
+    <button class="btn" onclick="loadPlaces('attraction')">🏛 Attractions</button>
+</div>
+
+<!-- SAVED -->
+<div id="fav" class="panel">
+    <h3>Saved Places</h3>
+    <ul id="favList"></ul>
+</div>
+
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<script>
+    let map = L.map('map').setView([20,0],2)
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19}).addTo(map)
+
+    let markers=[]
+    let loading=document.getElementById("loading")
+
+    function showMessage(msg){
+        let box=document.getElementById("msgBox")
+        box.innerText=msg
+        box.style.display="block"
+        setTimeout(()=>box.style.display="none",3000)
+    }
+
+    function openPanel(id){
+        document.querySelectorAll(".panel").forEach(p=>p.classList.remove("active"))
+        document.getElementById(id).classList.add("active")
+    }
+
+    function clearMarkers(){
+        markers.forEach(m=>map.removeLayer(m))
+        markers=[]
+    }
+
+    function showLoading(s){ loading.style.display=s?"block":"none" }
+    function toggleDark(){ document.body.classList.toggle("dark") }
+
+    function searchPlace(){
+        let query=document.getElementById("searchBox").value
+        if(!query) return
+        fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${query}`)
+            .then(res=>res.json())
+            .then(data=>{
+                if(data.length){
+                    let p=data[0]
+                    map.setView([p.lat,p.lon],14)
+                    L.marker([p.lat,p.lon]).addTo(map).bindPopup(p.display_name).openPopup()
+                }else{ showMessage("Place not found") }
+            })
+    }
+
+    function getLocation(){
+        navigator.geolocation.getCurrentPosition(
+            pos=>{ map.setView([pos.coords.latitude,pos.coords.longitude],14); showMessage("Location updated 📍") },
+            ()=>showMessage("Location denied")
+        )
+    }
+
+    function getDistance(lat1, lon1, lat2, lon2){
+        let R=6371
+        let dLat=(lat2-lat1)*Math.PI/180
+        let dLon=(lon2-lon1)*Math.PI/180
+        let a=Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180) * Math.sin(dLon/2)**2
+        let c=2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a))
+        return (R*c).toFixed(1)
+    }
+
+    async function loadPlaces(type){
+        showLoading(true)
+        clearMarkers()
+        let c=map.getCenter()
+        let tags={ restaurant:'amenity="restaurant"', bar:'amenity="bar"', hotel:'tourism="hotel"', attraction:'tourism="attraction"' }
+        let query=`[out:json][timeout:20];(node[${tags[type]}](around:4000,${c.lat},${c.lng});way[${tags[type]}](around:4000,${c.lat},${c.lng}););out center 50;`
+        try{
+            let res=await fetch("https://overpass-api.de/api/interpreter",{method:"POST",body:query})
+            let data=await res.json()
+            if(!data.elements.length){ showMessage("No results — move map 📍"); showLoading(false); return }
+            data.elements.forEach(p=>{
+                let lat=p.lat||p.center?.lat
+                let lon=p.lon||p.center?.lon
+                if(!lat) return
+                let name=p.tags?.name||"Unnamed"
+                let cleanName=name.replace(/'/g,"\\'")
+                let dist=getDistance(c.lat,c.lng,lat,lon)
+                let m=L.marker([lat,lon]).addTo(map)
+                let favs=JSON.parse(localStorage.getItem("favs")||"[]")
+                let isSaved=favs.find(f=>f.name===name && f.lat===lat && f.lon===lon)
+                let saveBtnText=isSaved?"❤️ Saved":"❤️ Save"
+                m.bindPopup(`
+<b>${name}</b><br>
+📍 ${dist} km away<br><br>
+<button onclick="window.open('https://www.google.com/maps/dir/?api=1&destination=${lat},${lon}','_blank')" style="width:100%;">🧭 Directions</button>
+<button onclick="saveFav('${cleanName}',${lat},${lon},'${type}', this)" style="width:100%;margin-top:5px;">${saveBtnText}</button>
+`)
+                markers.push(m)
+            })
+            showMessage(`Showing ${data.elements.length} ${type}s`)
+        }catch{ showMessage("Service busy — try again") }
+        showLoading(false)
+    }
+
+    function saveFav(name,lat,lon,type,btn){
+        let favs=JSON.parse(localStorage.getItem("favs")||"[]")
+        if(!favs.find(f=>f.name===name && f.lat===lat && f.lon===lon)){
+            favs.push({name,lat,lon,type})
+            localStorage.setItem("favs",JSON.stringify(favs))
+            showMessage("Saved ❤️")
+            renderFavs()
+            if(btn) btn.innerText="❤️ Saved"
+        } else {
+            showMessage("Already saved")
+            if(btn) btn.innerText="❤️ Saved"
+        }
+    }
+
+    function renderFavs(){
+        let favs=JSON.parse(localStorage.getItem("favs")||"[]")
+        let list=document.getElementById("favList")
+        list.innerHTML=""
+        if(!favs.length){ list.innerHTML="<p style='opacity:0.6'>No saved places yet</p>"; return }
+        favs.forEach((f,i)=>{
+            if(!f.name) return
+            let li=document.createElement("li")
+            li.innerHTML=`
+<div style="margin-bottom:15px;padding:12px;border-radius:12px;border:1px solid #eee;">
+<b>${f.name}</b><br><br>
+<div style="display:flex;gap:6px;">
+<button onclick="window.open('https://www.google.com/maps/search/?api=1&query=${f.lat},${f.lon}','_blank')" style="flex:1;">🌐 Open</button>
+</div>
+<button onclick="window.open('https://www.google.com/maps/dir/?api=1&destination=${f.lat},${f.lon}','_blank')" style="width:100%;margin-top:6px;">🧭 Directions</button>
+<button onclick="removeFav(${i})" style="width:100%;margin-top:8px;background:#ef4444;color:white;border:none;padding:8px;border-radius:8px;">Remove</button>
+</div>
+`
+            list.appendChild(li)
+        })
+    }
+
+    function removeFav(i){
+        let favs=JSON.parse(localStorage.getItem("favs")||"[]")
+        favs.splice(i,1)
+        localStorage.setItem("favs",JSON.stringify(favs))
+        renderFavs()
+    }
+
+    renderFavs()
+</script>
+</body>
+</html>
