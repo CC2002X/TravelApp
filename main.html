@@ -116,37 +116,79 @@
         return (R*c).toFixed(1)
     }
 
+    // ✅ FIXED TAGS
+    let tags = {
+        restaurant: 'amenity=restaurant',
+        bar: 'amenity=bar',
+        hotel: 'tourism=hotel',
+        attraction: 'tourism=attraction'
+    }
+
     async function loadPlaces(type){
         showLoading(true)
         clearMarkers()
-        let c=map.getCenter()
-        let tags={ restaurant:'amenity="restaurant"', bar:'amenity="bar"', hotel:'tourism="hotel"', attraction:'tourism="attraction"' }
-        let query=`[out:json][timeout:20];(node[${tags[type]}](around:4000,${c.lat},${c.lng});way[${tags[type]}](around:4000,${c.lat},${c.lng}););out center 50;`
+
+        let c = map.getCenter()
+
+        let query = `
+    [out:json][timeout:25];
+    (
+      node[${tags[type]}](around:5000,${c.lat},${c.lng});
+      way[${tags[type]}](around:5000,${c.lat},${c.lng});
+    );
+    out center;
+    `
+
         try{
-            let res=await fetch("https://overpass-api.de/api/interpreter",{method:"POST",body:query})
-            let data=await res.json()
-            if(!data.elements.length){ showMessage("No results — move map 📍"); showLoading(false); return }
-            data.elements.forEach(p=>{
-                let lat=p.lat||p.center?.lat
-                let lon=p.lon||p.center?.lon
+            let res = await fetch("https://overpass-api.de/api/interpreter", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "text/plain"
+                },
+                body: query
+            })
+
+            let data = await res.json()
+
+            if(!data.elements || data.elements.length === 0){
+                showMessage("No results — move map 📍")
+                showLoading(false)
+                return
+            }
+
+            data.elements.slice(0,50).forEach(p=>{
+                let lat = p.lat || p.center?.lat
+                let lon = p.lon || p.center?.lon
                 if(!lat) return
-                let name=p.tags?.name||"Unnamed"
-                let cleanName=name.replace(/'/g,"\\'")
-                let dist=getDistance(c.lat,c.lng,lat,lon)
-                let m=L.marker([lat,lon]).addTo(map)
-                let favs=JSON.parse(localStorage.getItem("favs")||"[]")
-                let isSaved=favs.find(f=>f.name===name && f.lat===lat && f.lon===lon)
-                let saveBtnText=isSaved?"❤️ Saved":"❤️ Save"
+
+                let name = p.tags?.name || "Unnamed"
+                let cleanName = name.replace(/'/g,"\\'")
+                let dist = getDistance(c.lat,c.lng,lat,lon)
+
+                let m = L.marker([lat,lon]).addTo(map)
+
+                let favs = JSON.parse(localStorage.getItem("favs")||"[]")
+                let isSaved = favs.find(f=>f.name===name && f.lat===lat && f.lon===lon)
+
+                let saveBtnText = isSaved ? "❤️ Saved" : "❤️ Save"
+
                 m.bindPopup(`
 <b>${name}</b><br>
 📍 ${dist} km away<br><br>
 <button onclick="window.open('https://www.google.com/maps/dir/?api=1&destination=${lat},${lon}','_blank')" style="width:100%;">🧭 Directions</button>
 <button onclick="saveFav('${cleanName}',${lat},${lon},'${type}', this)" style="width:100%;margin-top:5px;">${saveBtnText}</button>
 `)
+
                 markers.push(m)
             })
+
             showMessage(`Showing ${data.elements.length} ${type}s`)
-        }catch{ showMessage("Service busy — try again") }
+
+        }catch(e){
+            console.error(e)
+            showMessage("API error — try again later ⚠️")
+        }
+
         showLoading(false)
     }
 
@@ -168,17 +210,18 @@
         let favs=JSON.parse(localStorage.getItem("favs")||"[]")
         let list=document.getElementById("favList")
         list.innerHTML=""
-        if(!favs.length){ list.innerHTML="<p style='opacity:0.6'>No saved places yet</p>"; return }
+
+        if(!favs.length){
+            list.innerHTML="<p style='opacity:0.6'>No saved places yet</p>"
+            return
+        }
+
         favs.forEach((f,i)=>{
-            if(!f.name) return
             let li=document.createElement("li")
             li.innerHTML=`
 <div style="margin-bottom:15px;padding:12px;border-radius:12px;border:1px solid #eee;">
 <b>${f.name}</b><br><br>
-<div style="display:flex;gap:6px;">
-<button onclick="window.open('https://www.google.com/maps/search/?api=1&query=${f.lat},${f.lon}','_blank')" style="flex:1;">🌐 Open</button>
-</div>
-<button onclick="window.open('https://www.google.com/maps/dir/?api=1&destination=${f.lat},${f.lon}','_blank')" style="width:100%;margin-top:6px;">🧭 Directions</button>
+<button onclick="window.open('https://www.google.com/maps/dir/?api=1&destination=${f.lat},${f.lon}','_blank')" style="width:100%;">🧭 Directions</button>
 <button onclick="removeFav(${i})" style="width:100%;margin-top:8px;background:#ef4444;color:white;border:none;padding:8px;border-radius:8px;">Remove</button>
 </div>
 `
